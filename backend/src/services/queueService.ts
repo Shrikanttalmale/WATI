@@ -1,147 +1,150 @@
-import logger from '../utils/logger';
-import baileysService from './baileysService';
-import webJsService from './webJsService';
+import Queue from 'bull';
 import messageService from './messageService';
+import logger from '../utils/logger';
 
-interface MessageJob {
-  messageId: string;
-  campaignId: string;
-  userId: string;
-  recipientPhone: string;
-  recipientName: string;
-  messageBody: string;
-  delayType: string;
-  deliveryMethod: 'baileys' | 'web-js';
-  attempt: number;
-}
+const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
 export class QueueService {
-  private processedCount = 0;
-  private failedCount = 0;
+  private messageQueue: Queue.Queue;
+  private campaignQueue: Queue.Queue;
 
-  // In production, this would use Bull with Redis
-  // For now, we''re simulating queue with in-memory processing
-  async processMessageQueue(jobs: MessageJob[]): Promise<void> {
-    try {
-      logger.info('Processing message queue', { jobCount: jobs.length });
-
-      for (const job of jobs) {
-        await this.processMessageJob(job);
-      }
-
-      logger.info('Message queue processing completed', {
-        processed: this.processedCount,
-        failed: this.failedCount,
-      });
-    } catch (error) {
-      logger.error('Process message queue failed', { error });
-      throw error;
-    }
+  constructor() {
+    this.messageQueue = new Queue('messages', redisUrl);
+    this.campaignQueue = new Queue('campaigns', redisUrl);
+    this.setupProcessors();
   }
 
-  private async processMessageJob(job: MessageJob): Promise<void> {
-    try {
-      logger.info('Processing message job', {
-        messageId: job.messageId,
-        recipientPhone: job.recipientPhone,
-        deliveryMethod: job.deliveryMethod,
-      });
+  private setupProcessors() {
+    this.messageQueue.process(async (job) => {
+      const { userId, phoneNumber, message, campaignId } = job.data;
 
-      let result = { success: false, messageId: '', error: '' };
+      try {
+        const result = await messageService.sendMessage(userId, phoneNumber, message, campaignId);
 
-      // Try primary delivery method (Baileys)
-      if (job.deliveryMethod === 'baileys' || job.attempt === 0) {
-        result = await baileysService.sendMessage(
-          job.userId,
-          job.recipientPhone,
-          job.messageBody,
-          job.delayType
-        );
-
-        if (result.success) {
-          await messageService.updateMessageStatus(job.messageId, 'sent', 'baileys');
-          this.processedCount++;
-          return;
+        if (!result.success) {
+          if (job.attemptsMade < job.opts.attempts) {
+            throw new Error(result.error);
+          }
         }
+
+        return result;
+      } catch (error) {
+        logger.error('Queue message processing failed', {
+          jobId: job.id,
+          attempt: job.attemptsMade + 1,
+          error,
+        });
+        throw error;
       }
+    });
 
-      // Fallback to Web.js on Baileys failure
-      logger.warn('Baileys delivery failed, trying Web.js fallback', {
-        messageId: job.messageId,
-        error: result.error,
-      });
+    this.messageQueue.on('completed', (job) => {
+      logger.info('Message job completed', { jobId: job.id });
+    });
 
-      result = await webJsService.sendMessage(
-        job.userId,
-        job.recipientPhone,
-        job.messageBody,
-        job.delayType
+    this.messageQueue.on('failed', (job, error) => {
+      logger.error('Message job failed', { jobId: job.id, error: error.message });
+    });
+
+    this.campaignQueue.process(async (job) => {
+      const { campaignId, userId, delayMs } = job.data;
+
+      try {
+        const result = await messageService.sendCampaignMessages(campaignId, userId, delayMs);
+        return result;
+      } catch (error) {
+        logger.error('Campaign job failed', { jobId: job.id, campaignId, error });
+        throw error;
+      }
+    });
+
+    this.campaignQueue.on('progress', (job, progress) => {
+      logger.info('Campaign job progress', { jobId: job.id, progress: \`\${progress}%\` });
+    });
+  }
+
+  async addMessage(userId: string, phoneNumber: string, message: string, campaignId?: string) {
+    try {
+      const job = await this.messageQueue.add(
+        { userId, phoneNumber, message, campaignId },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: true,
+        }
       );
 
-      if (result.success) {
-        await messageService.updateMessageStatus(job.messageId, 'sent', 'web-js');
-        this.processedCount++;
-      } else {
-        // Both failed - schedule retry
-        await messageService.retryMessage(job.messageId);
-        this.failedCount++;
-        logger.error('Both delivery methods failed, retrying', {
-          messageId: job.messageId,
-          error: result.error,
-        });
-      }
-    } catch (error: any) {
-      logger.error('Process message job failed', { error: error.message, messageId: job.messageId });
-      await messageService.retryMessage(job.messageId);
-      this.failedCount++;
-    }
-  }
-
-  async addJobToQueue(messageJob: MessageJob): Promise<void> {
-    try {
-      // In production, this would add to Bull queue
-      // For now, we''re simulating with immediate processing
-      logger.info('Job added to queue', { messageId: messageJob.messageId });
-      await this.processMessageJob(messageJob);
+      logger.info('Message added to queue', { jobId: job.id, userId, phoneNumber });
+      return { jobId: job.id, success: true };
     } catch (error) {
-      logger.error('Add job to queue failed', { error });
+      logger.error('Failed to add message to queue', { error, userId, phoneNumber });
       throw error;
     }
   }
 
-  async retryFailedMessages(limit: number = 10): Promise<void> {
+  async addCampaign(campaignId: string, userId: string, delayMs: number = 5000) {
     try {
-      const failedMessages = await messageService.getMessagesByStatus('failed', limit);
-      logger.info('Retrying failed messages', { count: failedMessages.length });
-
-      for (const msg of failedMessages) {
-        const retried = await messageService.retryMessage(msg.id);
-        if (retried) {
-          const job: MessageJob = {
-            messageId: msg.id,
-            campaignId: msg.campaignId,
-            userId: msg.campaign.userId,
-            recipientPhone: msg.recipientPhone,
-            recipientName: msg.recipientName || '',
-            messageBody: msg.messageBody,
-            delayType: msg.campaign.delayType,
-            deliveryMethod: retried.deliveryMethod as 'baileys' | 'web-js',
-            attempt: retried.retryCount,
-          };
-          await this.addJobToQueue(job);
+      const job = await this.campaignQueue.add(
+        { campaignId, userId, delayMs },
+        {
+          priority: 1,
+          removeOnComplete: true,
         }
-      }
+      );
+
+      logger.info('Campaign added to queue', { jobId: job.id, campaignId });
+      return { jobId: job.id, success: true };
     } catch (error) {
-      logger.error('Retry failed messages failed', { error });
+      logger.error('Failed to add campaign to queue', { error, campaignId });
       throw error;
     }
   }
 
-  getQueueStats(): { processed: number; failed: number } {
-    return {
-      processed: this.processedCount,
-      failed: this.failedCount,
-    };
+  async getJobStatus(jobId: string) {
+    try {
+      const job = await this.messageQueue.getJob(jobId);
+      if (!job) {
+        return null;
+      }
+
+      return {
+        id: job.id,
+        status: await job.getState(),
+        progress: job.progress(),
+        attempts: job.attemptsMade,
+        maxAttempts: job.opts.attempts,
+      };
+    } catch (error) {
+      logger.error('Get job status failed', { error, jobId });
+      throw error;
+    }
+  }
+
+  async getQueueStats() {
+    try {
+      const messageStats = await this.messageQueue.getJobCounts();
+      const campaignStats = await this.campaignQueue.getJobCounts();
+
+      return {
+        messages: messageStats,
+        campaigns: campaignStats,
+      };
+    } catch (error) {
+      logger.error('Get queue stats failed', { error });
+      throw error;
+    }
+  }
+
+  async clearQueue() {
+    try {
+      await this.messageQueue.clean(0, 'completed');
+      await this.campaignQueue.clean(0, 'completed');
+      logger.info('Queue cleaned');
+      return { success: true };
+    } catch (error) {
+      logger.error('Clear queue failed', { error });
+      throw error;
+    }
   }
 }
 

@@ -1,122 +1,108 @@
+import axios from 'axios';
 import logger from '../utils/logger';
 
-interface WebJSSession {
-  browserHandle?: string;
-  isConnected: boolean;
-  lastSent: number;
-}
-
 export class WebJSService {
-  private sessions: Map<string, WebJSSession> = new Map();
-  private delayMap = {
-    fast: { min: 3000, max: 6000 },
-    balanced: { min: 6000, max: 12000 },
-    safe: { min: 12000, max: 40000 },
-  };
+  private readonly apiBaseUrl = process.env.WEBJS_API_URL || 'http://localhost:3001';
+  private sessions: Map<string, string> = new Map();
 
-  async initializeSession(userId: string): Promise<boolean> {
+  async initializeSession(userId: string) {
     try {
-      const sessionKey = `webjs_${userId}`;
+      const response = await axios.post(`${this.apiBaseUrl}/api/sessions/init`, {
+        sessionId: `session_${userId}`,
+        userId,
+      });
 
-      // In production, this would initialize puppeteer + whatsapp-web.js
-      // For now, we''re creating a mock session
-      const session: WebJSSession = {
-        browserHandle: `browser_${userId}_${Date.now()}`,
-        isConnected: true,
-        lastSent: Date.now(),
-      };
+      this.sessions.set(userId, response.data.sessionId);
+      logger.info('Web JS session initialized', { userId });
 
-      this.sessions.set(sessionKey, session);
-      logger.info('Web.js session initialized', { userId, sessionKey });
-      return true;
+      return { success: true, userId, sessionId: response.data.sessionId };
     } catch (error) {
-      logger.error('Web.js initialization failed', { error, userId });
-      return false;
+      logger.error('Web JS initialization failed', { error, userId });
+      throw error;
     }
   }
 
-  async sendMessage(
-    userId: string,
-    recipientPhone: string,
-    messageBody: string,
-    delayType: string = 'balanced'
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  async sendMessage(userId: string, phoneNumber: string, message: string) {
     try {
-      const sessionKey = `webjs_${userId}`;
-      const session = this.sessions.get(sessionKey);
-
-      if (!session || !session.isConnected) {
-        return {
-          success: false,
-          error: 'Web.js session not connected or not found',
-        };
+      const sessionId = this.sessions.get(userId);
+      if (!sessionId) {
+        throw new Error('Web JS session not initialized');
       }
 
-      // Apply delay based on delayType (slightly longer than Baileys for safety)
-      const delays = this.delayMap[delayType as keyof typeof this.delayMap] || this.delayMap.balanced;
-      const randomDelay = Math.random() * (delays.max - delays.min) + delays.min;
-      await this.sleep(randomDelay);
+      const response = await axios.post(`${this.apiBaseUrl}/api/messages/send`, {
+        sessionId,
+        phoneNumber,
+        message,
+      });
 
-      // In production, this would call client.sendMessage()
-      const messageId = `webjs_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-
-      session.lastSent = Date.now();
-
-      logger.info('Message sent via Web.js', { userId, recipientPhone, messageId, delayMs: Math.round(randomDelay) });
+      logger.info('Message sent via Web JS', { userId, phoneNumber, messageId: response.data.messageId });
 
       return {
         success: true,
-        messageId,
-      };
-    } catch (error: any) {
-      logger.error('Web.js send message failed', { error: error.message, userId, recipientPhone });
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }
-
-  async getSessionStatus(userId: string): Promise<{ connected: boolean; lastSent?: number }> {
-    try {
-      const sessionKey = `webjs_${userId}`;
-      const session = this.sessions.get(sessionKey);
-
-      if (!session) {
-        return { connected: false };
-      }
-
-      return {
-        connected: session.isConnected,
-        lastSent: session.lastSent,
+        messageId: response.data.messageId,
+        timestamp: response.data.timestamp,
+        deliveryMethod: 'web-js',
       };
     } catch (error) {
-      logger.error('Get Web.js session status failed', { error, userId });
-      return { connected: false };
+      logger.error('Web JS send failed', { error, userId, phoneNumber });
+      throw error;
     }
   }
 
-  async closeSession(userId: string): Promise<boolean> {
+  async sendBulk(userId: string, messages: Array<{ phone: string; message: string }>) {
     try {
-      const sessionKey = `webjs_${userId}`;
-      const session = this.sessions.get(sessionKey);
-
-      if (session && session.browserHandle) {
-        // In production, would close browser: await browser.close()
-        logger.info('Closing browser handle', { browserHandle: session.browserHandle });
+      const sessionId = this.sessions.get(userId);
+      if (!sessionId) {
+        throw new Error('Web JS session not initialized');
       }
 
-      this.sessions.delete(sessionKey);
-      logger.info('Web.js session closed', { userId, sessionKey });
-      return true;
+      const response = await axios.post(`${this.apiBaseUrl}/api/messages/bulk-send`, {
+        sessionId,
+        messages,
+      });
+
+      logger.info('Bulk messages sent via Web JS', { userId, count: messages.length });
+
+      return response.data.results;
     } catch (error) {
-      logger.error('Close Web.js session failed', { error, userId });
-      return false;
+      logger.error('Web JS bulk send failed', { error, userId });
+      throw error;
     }
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  async getStatus(userId: string) {
+    try {
+      const sessionId = this.sessions.get(userId);
+      if (!sessionId) {
+        return { status: 'not_connected', userId };
+      }
+
+      const response = await axios.get(`${this.apiBaseUrl}/api/sessions/${sessionId}/status`);
+
+      return {
+        status: response.data.status,
+        userId,
+        phone: response.data.phone,
+      };
+    } catch (error) {
+      logger.error('Get Web JS status failed', { error, userId });
+      return { status: 'error', userId, error: error.message };
+    }
+  }
+
+  async disconnect(userId: string) {
+    try {
+      const sessionId = this.sessions.get(userId);
+      if (sessionId) {
+        await axios.post(`${this.apiBaseUrl}/api/sessions/${sessionId}/disconnect`, {});
+        this.sessions.delete(userId);
+        logger.info('Web JS disconnected', { userId });
+      }
+      return { success: true };
+    } catch (error) {
+      logger.error('Web JS disconnect failed', { error, userId });
+      throw error;
+    }
   }
 }
 

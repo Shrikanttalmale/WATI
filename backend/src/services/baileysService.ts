@@ -1,116 +1,116 @@
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth, Events } = pkg;
 import logger from '../utils/logger';
 
-interface BaileysSession {
-  phone: string;
-  isConnected: boolean;
-  lastSent: number;
-}
-
 export class BaileysService {
-  private sessions: Map<string, BaileysSession> = new Map();
-  private delayMap = {
-    fast: { min: 2000, max: 5000 },
-    balanced: { min: 5000, max: 10000 },
-    safe: { min: 10000, max: 30000 },
-  };
+  private clients: Map<string, any> = new Map();
 
-  async initializeSession(userId: string, sessionData?: string): Promise<boolean> {
+  async initializeSession(userId: string) {
     try {
-      const sessionKey = `baileys_${userId}`;
-      
-      // In production, this would initialize Baileys with WhatsApp Web
-      // For now, we''re creating a mock session that''s ready for Baileys integration
-      const session: BaileysSession = {
-        phone: '',
-        isConnected: true,
-        lastSent: Date.now(),
-      };
+      const client = new Client({
+        authStrategy: new LocalAuth({ clientId: `user_${userId}` }),
+      });
 
-      this.sessions.set(sessionKey, session);
-      logger.info('Baileys session initialized', { userId, sessionKey });
-      return true;
+      client.on(Events.QR_RECEIVED, (qr) => {
+        logger.info('QR code received', { userId });
+      });
+
+      client.on(Events.AUTHENTICATED, () => {
+        logger.info('WhatsApp authenticated', { userId });
+      });
+
+      client.on(Events.READY, () => {
+        logger.info('WhatsApp client ready', { userId });
+        this.clients.set(userId, client);
+      });
+
+      client.on(Events.MESSAGE_RECEIVED, (msg) => {
+        logger.info('Message received', { userId, from: msg.from });
+      });
+
+      await client.initialize();
+      return { success: true, userId };
     } catch (error) {
       logger.error('Baileys initialization failed', { error, userId });
-      return false;
+      throw error;
     }
   }
 
-  async sendMessage(
-    userId: string,
-    recipientPhone: string,
-    messageBody: string,
-    delayType: string = 'balanced'
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  async sendMessage(userId: string, phoneNumber: string, message: string) {
     try {
-      const sessionKey = `baileys_${userId}`;
-      const session = this.sessions.get(sessionKey);
-
-      if (!session || !session.isConnected) {
-        return {
-          success: false,
-          error: 'Session not connected or not found',
-        };
+      const client = this.clients.get(userId);
+      if (!client) {
+        throw new Error('WhatsApp session not initialized');
       }
 
-      // Apply delay based on delayType
-      const delays = this.delayMap[delayType as keyof typeof this.delayMap] || this.delayMap.balanced;
-      const randomDelay = Math.random() * (delays.max - delays.min) + delays.min;
-      await this.sleep(randomDelay);
+      const chatId = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@c.us`;
+      const response = await client.sendMessage(chatId, message);
 
-      // In production, this would call Baileys socket.sendMessage()
-      // For now, we''re simulating successful send with mock messageId
-      const messageId = `baileys_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      
-      session.lastSent = Date.now();
-
-      logger.info('Message sent via Baileys', { userId, recipientPhone, messageId, delayMs: Math.round(randomDelay) });
+      logger.info('Message sent via Baileys', { userId, phoneNumber, messageId: response.id.id });
 
       return {
         success: true,
-        messageId,
+        messageId: response.id.id,
+        timestamp: response.timestamp,
+        deliveryMethod: 'baileys',
       };
-    } catch (error: any) {
-      logger.error('Baileys send message failed', { error: error.message, userId, recipientPhone });
-      return {
-        success: false,
-        error: error.message,
-      };
+    } catch (error) {
+      logger.error('Baileys send failed', { error, userId, phoneNumber });
+      throw error;
     }
   }
 
-  async getSessionStatus(userId: string): Promise<{ connected: boolean; lastSent?: number }> {
+  async sendBulk(userId: string, messages: Array<{ phone: string; message: string }>) {
     try {
-      const sessionKey = `baileys_${userId}`;
-      const session = this.sessions.get(sessionKey);
+      const results = [];
+      for (const msg of messages) {
+        try {
+          const result = await this.sendMessage(userId, msg.phone, msg.message);
+          results.push({ phone: msg.phone, success: true, ...result });
+        } catch (error: any) {
+          results.push({ phone: msg.phone, success: false, error: error.message });
+          logger.warn('Bulk message failed for phone', { phone: msg.phone, error: error.message });
+        }
+      }
+      return results;
+    } catch (error) {
+      logger.error('Bulk send failed', { error, userId });
+      throw error;
+    }
+  }
 
-      if (!session) {
-        return { connected: false };
+  async getStatus(userId: string) {
+    try {
+      const client = this.clients.get(userId);
+      if (!client) {
+        return { status: 'not_connected', userId };
       }
 
+      const state = client.info?.pushname ? 'connected' : 'connecting';
       return {
-        connected: session.isConnected,
-        lastSent: session.lastSent,
+        status: state,
+        userId,
+        phone: client.info?.pushname,
       };
     } catch (error) {
-      logger.error('Get session status failed', { error, userId });
-      return { connected: false };
+      logger.error('Get status failed', { error, userId });
+      return { status: 'error', userId, error: error.message };
     }
   }
 
-  async closeSession(userId: string): Promise<boolean> {
+  async disconnect(userId: string) {
     try {
-      const sessionKey = `baileys_${userId}`;
-      this.sessions.delete(sessionKey);
-      logger.info('Baileys session closed', { userId, sessionKey });
-      return true;
+      const client = this.clients.get(userId);
+      if (client) {
+        await client.destroy();
+        this.clients.delete(userId);
+        logger.info('WhatsApp disconnected', { userId });
+      }
+      return { success: true };
     } catch (error) {
-      logger.error('Close session failed', { error, userId });
-      return false;
+      logger.error('Disconnect failed', { error, userId });
+      throw error;
     }
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 

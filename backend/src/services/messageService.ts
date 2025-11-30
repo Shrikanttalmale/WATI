@@ -1,169 +1,157 @@
 import { PrismaClient } from '@prisma/client';
+import baileysService from './baileysService';
+import webJsService from './webJsService';
 import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 
 export class MessageService {
-  async createMessage(
-    campaignId: string,
-    recipientPhone: string,
-    recipientName: string,
-    messageBody: string
-  ) {
-    try {
-      const message = await prisma.message.create({
-        data: {
-          campaignId,
-          recipientPhone,
-          recipientName,
-          messageBody,
-          status: 'pending',
-          deliveryMethod: 'baileys',
-          maxRetries: 3,
-          retryCount: 0,
-        },
-      });
+  async sendMessage(userId: string, phoneNumber: string, message: string, campaignId?: string) {
+    let messageId = `msg_${Date.now()}`;
+    let deliveryMethod = 'baileys';
 
-      logger.info('Message created', { messageId: message.id, recipientPhone });
-      return message;
+    try {
+      try {
+        const result = await baileysService.sendMessage(userId, phoneNumber, message);
+        messageId = result.messageId;
+        deliveryMethod = 'baileys';
+
+        if (campaignId) {
+          await prisma.message.create({
+            data: {
+              campaignId,
+              recipientPhone: phoneNumber,
+              messageBody: message,
+              deliveryMethod: 'baileys',
+              status: 'sent',
+              sentAt: new Date(),
+            },
+          });
+        }
+
+        logger.info('Message delivered via Baileys', { userId, phoneNumber, messageId });
+        return { success: true, messageId, deliveryMethod: 'baileys' };
+      } catch (baileysError) {
+        logger.warn('Baileys failed, falling back to Web JS', { userId, phoneNumber, error: baileysError });
+
+        const webJsResult = await webJsService.sendMessage(userId, phoneNumber, message);
+        messageId = webJsResult.messageId;
+        deliveryMethod = 'web-js';
+
+        if (campaignId) {
+          await prisma.message.create({
+            data: {
+              campaignId,
+              recipientPhone: phoneNumber,
+              messageBody: message,
+              deliveryMethod: 'web-js',
+              status: 'sent',
+              sentAt: new Date(),
+            },
+          });
+        }
+
+        logger.info('Message delivered via Web JS fallback', { userId, phoneNumber, messageId });
+        return { success: true, messageId, deliveryMethod: 'web-js' };
+      }
     } catch (error) {
-      logger.error('Create message failed', { error, campaignId });
-      throw error;
-    }
-  }
+      logger.error('Message delivery failed completely', { error, userId, phoneNumber });
 
-  async getMessagesByStatus(status: string, limit: number = 100) {
-    try {
-      const messages = await prisma.message.findMany({
-        where: { status },
-        take: limit,
-        orderBy: { createdAt: 'asc' },
-        include: {
-          campaign: {
-            select: { userId: true, delayType: true },
+      if (campaignId) {
+        await prisma.message.create({
+          data: {
+            campaignId,
+            recipientPhone: phoneNumber,
+            messageBody: message,
+            status: 'failed',
+            failedReason: error.message,
+            failedAt: new Date(),
           },
-        },
-      });
+        });
+      }
 
-      return messages;
-    } catch (error) {
-      logger.error('Get messages by status failed', { error });
-      throw error;
+      return { success: false, error: error.message };
     }
   }
 
-  async updateMessageStatus(
-    messageId: string,
-    status: string,
-    deliveryMethod: string = 'baileys',
-    failedReason?: string
-  ) {
+  async sendCampaignMessages(campaignId: string, userId: string, delayMs: number = 5000) {
     try {
-      const updateData: any = {
-        status,
-        deliveryMethod,
-        updatedAt: new Date(),
-      };
-
-      if (status === 'sent') {
-        updateData.sentAt = new Date();
-      } else if (status === 'delivered') {
-        updateData.deliveredAt = new Date();
-      } else if (status === 'failed') {
-        updateData.failedAt = new Date();
-        if (failedReason) updateData.failedReason = failedReason;
-      }
-
-      const message = await prisma.message.update({
-        where: { id: messageId },
-        data: updateData,
+      const campaign = await prisma.campaign.findUnique({
+        where: { id: campaignId },
+        include: { contacts: true },
       });
 
-      logger.info('Message status updated', { messageId, status });
-      return message;
-    } catch (error) {
-      logger.error('Update message status failed', { error, messageId });
-      throw error;
-    }
-  }
-
-  async retryMessage(messageId: string) {
-    try {
-      const message = await prisma.message.findUnique({ where: { id: messageId } });
-
-      if (!message) {
-        throw new Error('Message not found');
+      if (!campaign || campaign.userId !== userId) {
+        throw new Error('Campaign not found');
       }
 
-      if (message.retryCount >= message.maxRetries) {
-        await this.updateMessageStatus(messageId, 'failed', message.deliveryMethod, 'Max retries exceeded');
-        return null;
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'sending', startedAt: new Date() },
+      });
+
+      let sentCount = 0;
+      let failedCount = 0;
+
+      for (const contact of campaign.contacts) {
+        try {
+          await this.sendMessage(userId, contact.phone, campaign.messageBody, campaignId);
+          sentCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error('Campaign message failed', { campaignId, phone: contact.phone, error });
+        }
+
+        await this.delay(delayMs);
       }
 
-      // Switch delivery method on retry
-      const newDeliveryMethod = message.deliveryMethod === 'baileys' ? 'web-js' : 'baileys';
-
-      const updated = await prisma.message.update({
-        where: { id: messageId },
+      await prisma.campaign.update({
+        where: { id: campaignId },
         data: {
-          status: 'pending',
-          retryCount: { increment: 1 },
-          deliveryMethod: newDeliveryMethod,
-          updatedAt: new Date(),
+          status: 'sent',
+          completedAt: new Date(),
+          sentCount,
+          failedCount,
         },
       });
 
-      logger.info('Message retry initiated', { messageId, retryCount: updated.retryCount, newMethod: newDeliveryMethod });
-      return updated;
+      logger.info('Campaign completed', { campaignId, sentCount, failedCount });
+      return { success: true, sentCount, failedCount };
     } catch (error) {
-      logger.error('Retry message failed', { error, messageId });
+      logger.error('Send campaign messages failed', { error, campaignId });
       throw error;
     }
   }
 
-  async updateCampaignStats(campaignId: string) {
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async getMessageStats(campaignId: string, userId: string) {
     try {
-      const messages = await prisma.message.findMany({
+      const campaign = await prisma.campaign.findUnique({
+        where: { id: campaignId },
+      });
+
+      if (!campaign || campaign.userId !== userId) {
+        throw new Error('Campaign not found');
+      }
+
+      const messages = await prisma.message.groupBy({
+        by: ['status'],
         where: { campaignId },
+        _count: true,
       });
 
       const stats = {
-        sentCount: messages.filter((m) => m.status === 'sent' || m.status === 'delivered').length,
-        deliveredCount: messages.filter((m) => m.status === 'delivered').length,
-        failedCount: messages.filter((m) => m.status === 'failed').length,
+        total: campaign.totalContacts,
+        sent: campaign.sentCount,
+        delivered: campaign.deliveredCount,
+        failed: campaign.failedCount,
+        pending: campaign.totalContacts - campaign.sentCount,
       };
 
-      const campaign = await prisma.campaign.update({
-        where: { id: campaignId },
-        data: {
-          sentCount: stats.sentCount,
-          deliveredCount: stats.deliveredCount,
-          failedCount: stats.failedCount,
-        },
-      });
-
-      logger.info('Campaign stats updated', { campaignId, ...stats });
-      return campaign;
-    } catch (error) {
-      logger.error('Update campaign stats failed', { error, campaignId });
-      throw error;
-    }
-  }
-
-  async getMessageStats(campaignId: string) {
-    try {
-      const messages = await prisma.message.findMany({
-        where: { campaignId },
-      });
-
-      return {
-        total: messages.length,
-        pending: messages.filter((m) => m.status === 'pending').length,
-        sent: messages.filter((m) => m.status === 'sent').length,
-        delivered: messages.filter((m) => m.status === 'delivered').length,
-        failed: messages.filter((m) => m.status === 'failed').length,
-        successRate: messages.length > 0 ? ((messages.filter((m) => m.status === 'delivered').length / messages.length) * 100).toFixed(2) : 0,
-      };
+      return stats;
     } catch (error) {
       logger.error('Get message stats failed', { error, campaignId });
       throw error;

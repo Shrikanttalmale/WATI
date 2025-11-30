@@ -5,6 +5,16 @@ import rateLimit from 'express-rate-limit';
 import 'dotenv/config';
 import logger from './utils/logger';
 
+// Import routes
+import authRoutes from './routes/authRoutes';
+import whatsappRoutes from './routes/whatsappRoutes';
+import campaignRoutes from './routes/campaignRoutes';
+import messageRoutes from './routes/messageRoutes';
+import templateRoutes from './routes/templateRoutes';
+import analyticsRoutes from './routes/analyticsRoutes';
+import billingRoutes from './routes/billingRoutes';
+import adminRoutes from './routes/adminRoutes';
+
 const app: Express = express();
 const PORT = process.env.PORT || 3000;
 
@@ -27,7 +37,17 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Routes will be added here
+// Register routes
+app.use('/api/auth', authRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/campaigns', campaignRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/admin', adminRoutes);
+
+// Test route
 app.get('/api/test', (req, res) => {
   res.json({ success: true, message: 'Backend is working!' });
 });

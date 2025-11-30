@@ -1,0 +1,236 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  companyName   String?
+  planId        String?
+  status        String   @default("active") // active, suspended, deleted
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  trialStartedAt DateTime?
+  trialExpiresAt DateTime?
+  
+  // Relations
+  plan          Plan?           @relation(fields: [planId], references: [id])
+  campaigns     Campaign[]
+  contacts      Contact[]
+  templates     Template[]
+  sessions      Session[]
+  billingHistory BillingHistory[]
+  adminActions  AdminAction[]
+  
+  @@index([email])
+  @@index([status])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  name      String   @unique // free, starter, professional, enterprise
+  price     Float    // monthly price
+  messagesPerMonth Int
+  contactsLimit Int
+  apiAccess Boolean  @default(false)
+  customDomain Boolean @default(false)
+  priority  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  users     User[]
+  
+  @@index([name])
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  messageBody     String
+  delayType       String   @default("balanced") // fast, balanced, safe
+  status          String   @default("draft") // draft, scheduled, sending, sent, paused
+  
+  totalContacts   Int      @default(0)
+  sentCount       Int      @default(0)
+  deliveredCount  Int      @default(0)
+  failedCount     Int      @default(0)
+  
+  scheduledFor    DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages        Message[]
+  contacts        Contact[]
+  batchLogs       CampaignBatchLog[]
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  campaignId      String
+  recipientPhone  String
+  recipientName   String?
+  messageBody     String
+  status          String   @default("pending") // pending, sent, delivered, failed, bounced
+  deliveryMethod  String   @default("baileys") // baileys, web-js
+  
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  failedAt        DateTime?
+  failedReason    String?
+  retryCount      Int      @default(0)
+  maxRetries      Int      @default(3)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  @@index([campaignId])
+  @@index([recipientPhone])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Contact {
+  id          String   @id @default(cuid())
+  campaignId  String
+  userId      String
+  phone       String
+  name        String?
+  metadata    String?  // JSON string
+  tags        String[] // for filtering/segmentation
+  
+  addedAt     DateTime @default(now())
+  
+  // Relations
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([campaignId, phone])
+  @@index([userId])
+  @@index([campaignId])
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  content     String
+  category    String? // promotional, transactional, reminder
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  userId      String
+  sessionName String
+  sessionData String   // base64 encoded Baileys session
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime?
+  qrCode      String?  // base64 encoded QR image
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([isActive])
+}
+
+model BillingHistory {
+  id          String   @id @default(cuid())
+  userId      String
+  planId      String
+  amount      Float
+  currency    String   @default("INR")
+  status      String   @default("pending") // pending, completed, failed, refunded
+  razorpayOrderId String?
+  
+  billedAt    DateTime @default(now())
+  paidAt      DateTime?
+  expiresAt   DateTime?
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([status])
+}
+
+model CampaignBatchLog {
+  id          String   @id @default(cuid())
+  campaignId  String
+  batchNumber Int
+  totalInBatch Int
+  successCount Int
+  failureCount Int
+  
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  
+  // Relations
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  @@index([campaignId])
+}
+
+model BanRiskEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  eventType   String   // too_many_messages, suspicious_pattern, account_flagged
+  description String?
+  riskLevel   String   @default("low") // low, medium, high
+  resolved    Boolean  @default(false)
+  
+  detectedAt  DateTime @default(now())
+  resolvedAt  DateTime?
+  
+  @@index([userId])
+  @@index([riskLevel])
+}
+
+model AdminAction {
+  id          String   @id @default(cuid())
+  userId      String
+  adminId     String
+  action      String   // suspend, activate, warning, policy_violation
+  reason      String?
+  metadata    String?  // JSON
+  
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}

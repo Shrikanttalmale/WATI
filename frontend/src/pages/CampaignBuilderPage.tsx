@@ -47,10 +47,10 @@ export default function CampaignBuilderPage() {
       // Create campaign
       const campaignRes = await campaignAPI.create({
         name: formData.name,
-        message: formData.message,
+        messageBody: formData.message,
       });
 
-      const campaignId = campaignRes.data.id;
+      const campaignId = campaignRes.data.data?.id || campaignRes.data.id;
 
       // Add contacts if any
       if (contacts.length > 0) {
@@ -62,7 +62,7 @@ export default function CampaignBuilderPage() {
         await campaignAPI.send(campaignId);
       } else {
         const scheduledTime = new Date(formData.scheduledTime).toISOString();
-        // Schedule API call would go here
+        await messageAPI.schedule(campaignId, scheduledTime);
       }
 
       navigate("/dashboard");

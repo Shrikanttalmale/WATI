@@ -25,12 +25,26 @@ export class TemplateService {
   async getTemplates(userId: string, limit: number = 20, offset: number = 0) {
     try {
       const templates = await prisma.template.findMany({
-        where: { userId },
+        where: {
+          OR: [
+            { userId },  // User's custom templates
+            { userId: 'default' },  // Default templates
+            { isDefault: true },  // Default flag
+          ],
+        },
         take: limit,
         skip: offset,
         orderBy: { createdAt: 'desc' },
       });
-      const total = await prisma.template.count({ where: { userId } });
+      const total = await prisma.template.count({
+        where: {
+          OR: [
+            { userId },
+            { userId: 'default' },
+            { isDefault: true },
+          ],
+        },
+      });
       return { templates, total };
     } catch (error) {
       logger.error('Get templates failed', { error, userId });

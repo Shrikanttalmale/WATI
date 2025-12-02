@@ -1,5 +1,5 @@
 ﻿import express, { Request, Response } from 'express';
-import { verifyAuth } from '../middleware/authMiddleware';
+import { authMiddleware as verifyAuth } from '../middleware/authMiddleware';
 import analyticsService from '../services/analyticsService';
 import logger from '../utils/logger';
 
@@ -10,10 +10,10 @@ router.get('/delivery-dashboard', verifyAuth, async (req: Request, res: Response
   try {
     const userId = (req as any).userId;
     const dashboard = await analyticsService.getDeliveryDashboard(userId);
-    res.json({ success: true, dashboard });
+    res.json({ success: true, data: dashboard });
   } catch (error) {
     logger.error('Get delivery dashboard failed', { error });
-    res.status(500).json({ error: 'Failed to get analytics' });
+    res.status(500).json({ success: false, error: 'Failed to get analytics' });
   }
 });
 
@@ -22,10 +22,10 @@ router.get('/message/:campaignId', verifyAuth, async (req: Request, res: Respons
   try {
     const userId = (req as any).userId;
     const analytics = await analyticsService.getMessageAnalytics(req.params.campaignId, userId);
-    res.json({ success: true, analytics });
+    res.json({ success: true, data: analytics });
   } catch (error) {
     logger.error('Get message analytics failed', { error });
-    res.status(500).json({ error: 'Failed to get message analytics' });
+    res.status(500).json({ success: false, error: 'Failed to get message analytics' });
   }
 });
 
@@ -36,7 +36,7 @@ router.post('/date-range', verifyAuth, async (req: Request, res: Response) => {
     const { startDate, endDate } = req.body;
 
     if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'Start and end dates required' });
+      return res.status(400).json({ success: false, error: 'Start and end dates required' });
     }
 
     const analytics = await analyticsService.getAnalyticsByDateRange(
@@ -44,10 +44,10 @@ router.post('/date-range', verifyAuth, async (req: Request, res: Response) => {
       new Date(startDate),
       new Date(endDate)
     );
-    res.json({ success: true, analytics });
+    res.json({ success: true, data: analytics });
   } catch (error) {
     logger.error('Get analytics by date range failed', { error });
-    res.status(500).json({ error: 'Failed to get analytics' });
+    res.status(500).json({ success: false, error: 'Failed to get analytics' });
   }
 });
 
@@ -56,10 +56,10 @@ router.get('/ban-risk', verifyAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const events = await analyticsService.getBanRiskEvents(userId);
-    res.json({ success: true, events });
+    res.json({ success: true, data: events });
   } catch (error) {
     logger.error('Get ban risk events failed', { error });
-    res.status(500).json({ error: 'Failed to get ban risk events' });
+    res.status(500).json({ success: false, error: 'Failed to get ban risk events' });
   }
 });
 
@@ -68,10 +68,10 @@ router.get('/safety-score', verifyAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const score = await analyticsService.getAccountSafetyScore(userId);
-    res.json({ success: true, score });
+    res.json({ success: true, data: score });
   } catch (error) {
     logger.error('Get safety score failed', { error });
-    res.status(500).json({ error: 'Failed to get safety score' });
+    res.status(500).json({ success: false, error: 'Failed to get safety score' });
   }
 });
 

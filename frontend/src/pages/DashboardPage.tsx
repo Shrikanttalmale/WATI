@@ -43,9 +43,9 @@ export default function DashboardPage() {
         campaignAPI.list(),
       ]);
 
-      setCampaigns(campaignRes.data);
+      setCampaigns(campaignRes.data.data?.campaigns || campaignRes.data.campaigns || campaignRes.data);
       setStats({
-        sentToday: campaignRes.data.reduce(
+        sentToday: (campaignRes.data.data?.campaigns || campaignRes.data.campaigns || campaignRes.data).reduce(
           (sum: number, c: Campaign) =>
             c.status === "sent" ? sum + c.contactCount : sum,
           0

@@ -1,5 +1,5 @@
 ﻿import express, { Request, Response } from 'express';
-import { verifyAuth } from '../middleware/authMiddleware';
+import { authMiddleware as verifyAuth } from '../middleware/authMiddleware';
 import adminService from '../services/adminService';
 import logger from '../utils/logger';
 
@@ -8,14 +8,20 @@ const router = express.Router();
 // Middleware to check admin privileges
 const checkAdmin = async (req: Request, res: Response, next: Function) => {
   try {
-    const userId = (req as any).userId;
+    const userId = (req as any).userId || (req as any).user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+
     const isAdmin = await adminService.isAdmin(userId);
     if (!isAdmin) {
-      return res.status(403).json({ error: 'Admin access required' });
+      return res.status(403).json({ success: false, error: 'Admin access required' });
     }
     next();
   } catch (error) {
-    res.status(500).json({ error: 'Authorization failed' });
+    logger.error('Admin authorization check failed', { error });
+    res.status(500).json({ success: false, error: 'Authorization check failed' });
   }
 };
 
@@ -23,10 +29,10 @@ const checkAdmin = async (req: Request, res: Response, next: Function) => {
 router.get('/dashboard', verifyAuth, checkAdmin, async (req: Request, res: Response) => {
   try {
     const dashboard = await adminService.getDashboard();
-    res.json({ success: true, dashboard });
+    res.json({ success: true, data: dashboard });
   } catch (error) {
     logger.error('Get admin dashboard failed', { error });
-    res.status(500).json({ error: 'Failed to get dashboard' });
+    res.status(500).json({ success: false, error: 'Failed to get dashboard' });
   }
 });
 
@@ -36,10 +42,10 @@ router.get('/users', verifyAuth, checkAdmin, async (req: Request, res: Response)
     const limit = parseInt(req.query.limit as string) || 20;
     const offset = parseInt(req.query.offset as string) || 0;
     const result = await adminService.getAllUsers(limit, offset);
-    res.json({ success: true, ...result });
+    res.json({ success: true, data: result });
   } catch (error) {
     logger.error('Get users failed', { error });
-    res.status(500).json({ error: 'Failed to get users' });
+    res.status(500).json({ success: false, error: 'Failed to get users' });
   }
 });
 
@@ -47,10 +53,10 @@ router.get('/users', verifyAuth, checkAdmin, async (req: Request, res: Response)
 router.get('/users/:id', verifyAuth, checkAdmin, async (req: Request, res: Response) => {
   try {
     const result = await adminService.getUserDetails(req.params.id);
-    res.json({ success: true, ...result });
+    res.json({ success: true, data: result });
   } catch (error) {
-    logger.error('Get user details failed', { error });
-    res.status(404).json({ error: 'User not found' });
+    logger.error('Get user failed', { error });
+    res.status(404).json({ success: false, error: 'User not found' });
   }
 });
 
@@ -59,10 +65,10 @@ router.post('/users/:id/suspend', verifyAuth, checkAdmin, async (req: Request, r
   try {
     const { reason } = req.body;
     const user = await adminService.suspendUser(req.params.id, reason);
-    res.json({ success: true, user });
+    res.json({ success: true });
   } catch (error) {
     logger.error('Suspend user failed', { error });
-    res.status(500).json({ error: 'Failed to suspend user' });
+    res.status(500).json({ success: false, error: 'Failed to suspend user' });
   }
 });
 
@@ -70,10 +76,10 @@ router.post('/users/:id/suspend', verifyAuth, checkAdmin, async (req: Request, r
 router.post('/users/:id/reactivate', verifyAuth, checkAdmin, async (req: Request, res: Response) => {
   try {
     const user = await adminService.reactivateUser(req.params.id);
-    res.json({ success: true, user });
+    res.json({ success: true });
   } catch (error) {
     logger.error('Reactivate user failed', { error });
-    res.status(500).json({ error: 'Failed to reactivate user' });
+    res.status(500).json({ success: false, error: 'Failed to reactivate user' });
   }
 });
 
@@ -85,7 +91,7 @@ router.delete('/users/:id', verifyAuth, checkAdmin, async (req: Request, res: Re
     res.json({ success: true });
   } catch (error) {
     logger.error('Delete user failed', { error });
-    res.status(500).json({ error: 'Failed to delete user' });
+    res.status(500).json({ success: false, error: 'Failed to delete user' });
   }
 });
 

@@ -1,5 +1,5 @@
 ﻿import express, { Request, Response } from 'express';
-import { verifyAuth } from '../middleware/authMiddleware';
+import { authMiddleware as verifyAuth } from '../middleware/authMiddleware';
 import billingService from '../services/billingService';
 import logger from '../utils/logger';
 
@@ -9,10 +9,10 @@ const router = express.Router();
 router.get('/plans', async (req: Request, res: Response) => {
   try {
     const plans = await billingService.getAllPlans();
-    res.json({ success: true, plans });
+    res.json({ success: true, data: plans });
   } catch (error) {
     logger.error('Get plans failed', { error });
-    res.status(500).json({ error: 'Failed to get plans' });
+    res.status(500).json({ success: false, error: 'Failed to get plans' });
   }
 });
 
@@ -21,10 +21,10 @@ router.get('/current-plan', verifyAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const plan = await billingService.getUserPlan(userId);
-    res.json({ success: true, plan });
+    res.json({ success: true, data: plan });
   } catch (error) {
     logger.error('Get current plan failed', { error });
-    res.status(500).json({ error: 'Failed to get plan' });
+    res.status(500).json({ success: false, error: 'Failed to get plan' });
   }
 });
 
@@ -35,14 +35,14 @@ router.post('/upgrade', verifyAuth, async (req: Request, res: Response) => {
     const { planId } = req.body;
 
     if (!planId) {
-      return res.status(400).json({ error: 'Plan ID required' });
+      return res.status(400).json({ success: false, error: 'Plan ID required' });
     }
 
     const updated = await billingService.upgradePlan(userId, planId);
-    res.json({ success: true, user: updated });
+    res.json({ success: true, data: updated });
   } catch (error) {
     logger.error('Upgrade plan failed', { error });
-    res.status(500).json({ error: 'Failed to upgrade plan' });
+    res.status(500).json({ success: false, error: 'Failed to upgrade plan' });
   }
 });
 
@@ -51,10 +51,10 @@ router.get('/usage', verifyAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const usage = await billingService.trackUsage(userId, 0);
-    res.json({ success: true, usage });
+    res.json({ success: true, data: usage });
   } catch (error) {
     logger.error('Get usage failed', { error });
-    res.status(500).json({ error: 'Failed to get usage' });
+    res.status(500).json({ success: false, error: 'Failed to get usage' });
   }
 });
 
@@ -63,10 +63,10 @@ router.get('/usage-limit', verifyAuth, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const limit = await billingService.checkUsageLimit(userId);
-    res.json({ success: true, limit });
+    res.json({ success: true, data: limit });
   } catch (error) {
     logger.error('Check usage limit failed', { error });
-    res.status(500).json({ error: 'Failed to check usage limit' });
+    res.status(500).json({ success: false, error: 'Failed to check usage limit' });
   }
 });
 
@@ -76,10 +76,10 @@ router.get('/history', verifyAuth, async (req: Request, res: Response) => {
     const userId = (req as any).userId;
     const limit = parseInt(req.query.limit as string) || 10;
     const history = await billingService.getBillingHistory(userId, limit);
-    res.json({ success: true, history });
+    res.json({ success: true, data: history });
   } catch (error) {
     logger.error('Get billing history failed', { error });
-    res.status(500).json({ error: 'Failed to get billing history' });
+    res.status(500).json({ success: false, error: 'Failed to get billing history' });
   }
 });
 
@@ -90,14 +90,87 @@ router.post('/invoice', verifyAuth, async (req: Request, res: Response) => {
     const { planId, amount } = req.body;
 
     if (!planId || !amount) {
-      return res.status(400).json({ error: 'Plan ID and amount required' });
+      return res.status(400).json({ success: false, error: 'Plan ID and amount required' });
     }
 
     const invoice = await billingService.createInvoice(userId, planId, amount);
-    res.json({ success: true, invoice });
+    res.json({ success: true, data: invoice });
   } catch (error) {
     logger.error('Create invoice failed', { error });
-    res.status(500).json({ error: 'Failed to create invoice' });
+    res.status(500).json({ success: false, error: 'Failed to create invoice' });
+  }
+});
+
+// POST /api/billing/checkout - Create Razorpay order
+router.post('/checkout', verifyAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { planId } = req.body;
+
+    if (!planId) {
+      return res.status(400).json({ success: false, error: 'Plan ID required' });
+    }
+
+    const plan = await billingService.getAllPlans().then(plans => 
+      plans.find(p => p.id === planId)
+    );
+    
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'Plan not found' });
+    }
+
+    // Mock Razorpay order creation (for MVP)
+    const orderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const invoice = await billingService.createInvoice(userId, planId, plan.price);
+
+    res.json({ 
+      success: true, 
+      data: {
+        orderId,
+        amount: Math.round(plan.price * 100), // Razorpay expects amount in paise
+        currency: 'INR',
+        planId,
+        invoiceId: invoice.id
+      } 
+    });
+  } catch (error) {
+    logger.error('Checkout failed', { error });
+    res.status(500).json({ success: false, error: 'Failed to create checkout' });
+  }
+});
+
+// POST /api/billing/verify - Verify Razorpay payment
+router.post('/verify', verifyAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { orderId, paymentId, signature, planId } = req.body;
+
+    if (!orderId || !planId) {
+      return res.status(400).json({ success: false, error: 'Order ID and Plan ID required' });
+    }
+
+    // Mock payment verification (for MVP - in production, verify with Razorpay)
+    const history = await billingService.getBillingHistory(userId, 1);
+    const lastInvoice = history[0];
+    
+    if (!lastInvoice) {
+      return res.status(400).json({ success: false, error: 'Invoice not found' });
+    }
+
+    // Update invoice status to completed
+    const updated = await billingService.upgradePlan(userId, planId);
+
+    logger.info('Payment verified', { userId, orderId, planId });
+    res.json({ 
+      success: true, 
+      data: { 
+        message: 'Payment verified successfully',
+        updated 
+      } 
+    });
+  } catch (error) {
+    logger.error('Payment verification failed', { error });
+    res.status(500).json({ success: false, error: 'Failed to verify payment' });
   }
 });
 

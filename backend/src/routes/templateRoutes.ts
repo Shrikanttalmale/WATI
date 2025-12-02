@@ -1,5 +1,5 @@
 ﻿import express, { Request, Response } from 'express';
-import { verifyAuth } from '../middleware/authMiddleware';
+import { authMiddleware as verifyAuth } from '../middleware/authMiddleware';
 import templateService from '../services/templateService';
 import logger from '../utils/logger';
 

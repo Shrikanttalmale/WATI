@@ -29,7 +29,7 @@ export default function TemplatesPage() {
     try {
       setLoading(true);
       const response = await client.get('/templates');
-      setTemplates(response.data.templates);
+      setTemplates(response.data.data || response.data.templates || response.data);
     } catch (error) {
       addToast('Failed to fetch templates', 'error');
     } finally {
@@ -41,7 +41,7 @@ export default function TemplatesPage() {
     e.preventDefault();
     try {
       if (editingId) {
-        await client.put(/templates/, formData);
+        await client.put(`/templates/${editingId}`, formData);
         addToast('Template updated successfully', 'success');
       } else {
         await client.post('/templates', formData);
@@ -59,7 +59,7 @@ export default function TemplatesPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure?')) return;
     try {
-      await client.delete(/templates/);
+      await client.delete(`/templates/${id}`);
       addToast('Template deleted', 'success');
       fetchTemplates();
     } catch (error) {
@@ -69,7 +69,7 @@ export default function TemplatesPage() {
 
   const handleDuplicate = async (id: string, name: string) => {
     try {
-      await client.post(/templates//duplicate, { name: \ (Copy) });
+      await client.post(`/templates/${id}/duplicate`, { name: `${name} (Copy)` });
       addToast('Template duplicated', 'success');
       fetchTemplates();
     } catch (error) {

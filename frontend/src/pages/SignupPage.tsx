@@ -39,7 +39,7 @@ export default function SignupPage() {
         formData.password,
         formData.name
       );
-      const { token, user } = response.data;
+      const { token, user } = response.data.data || response.data;
       setAuth(token, user);
       navigate("/dashboard");
     } catch (err: any) {

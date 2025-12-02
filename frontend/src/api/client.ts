@@ -28,7 +28,7 @@ export const authAPI = {
 
 // Campaigns API
 export const campaignAPI = {
-  create: (data: { name: string; message: string }) =>
+  create: (data: { name: string; messageBody: string }) =>
     apiClient.post("/campaigns", data),
   list: () => apiClient.get("/campaigns"),
   getById: (id: string) => apiClient.get(`/campaigns/${id}`),

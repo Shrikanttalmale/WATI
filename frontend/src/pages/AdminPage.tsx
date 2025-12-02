@@ -38,8 +38,8 @@ export default function AdminPage() {
         client.get('/admin/dashboard'),
         client.get('/admin/users'),
       ]);
-      setDashboard(dashRes.data.dashboard);
-      setUsers(usersRes.data.users);
+      setDashboard(dashRes.data.data || dashRes.data);
+      setUsers(usersRes.data.data || usersRes.data);
     } catch (error) {
       addToast('Failed to load admin data', 'error');
     } finally {
@@ -49,7 +49,7 @@ export default function AdminPage() {
 
   const handleSuspend = async (userId: string, reason?: string) => {
     try {
-      await client.post(/admin/users//suspend, { reason });
+      await client.post(`/admin/users/${userId}/suspend`, { reason });
       addToast('User suspended', 'success');
       fetchData();
     } catch (error) {
@@ -59,7 +59,7 @@ export default function AdminPage() {
 
   const handleReactivate = async (userId: string) => {
     try {
-      await client.post(/admin/users//reactivate, {});
+      await client.post(`/admin/users/${userId}/reactivate`, {});
       addToast('User reactivated', 'success');
       fetchData();
     } catch (error) {

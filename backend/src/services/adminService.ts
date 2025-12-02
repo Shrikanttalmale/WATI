@@ -8,7 +8,7 @@ export class AdminService {
   async isAdmin(userId: string) {
     try {
       const user = await prisma.user.findUnique({ where: { id: userId } });
-      return user?.status === 'admin';
+      return user?.role === 'admin';
     } catch (error) {
       logger.error('Is admin check failed', { error, userId });
       return false;

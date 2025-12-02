@@ -51,9 +51,8 @@ export class BillingService {
           userId,
           planId: newPlanId,
           amount: newPlan.price,
-          transactionId: TXN-,
-          status: 'success',
-          type: 'upgrade',
+          razorpayOrderId: `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          status: 'completed',
         },
       });
 
@@ -103,14 +102,14 @@ export class BillingService {
   // Create invoice
   async createInvoice(userId: string, planId: string, amount: number) {
     try {
+      const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const history = await prisma.billingHistory.create({
         data: {
           userId,
           planId,
           amount,
-          transactionId: INV-,
+          razorpayOrderId: invoiceId,
           status: 'pending',
-          type: 'invoice',
         },
       });
       logger.info('Invoice created', { userId, amount });

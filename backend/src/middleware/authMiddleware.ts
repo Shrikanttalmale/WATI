@@ -24,6 +24,7 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default-secret') as AuthPayload;
     req.user = decoded;
+    (req as any).userId = decoded.userId;
     next();
   } catch (error) {
     logger.error('Auth middleware error:', { error });

@@ -37,8 +37,8 @@ export default function BillingPage() {
         client.get('/billing/plans'),
         client.get('/billing/usage'),
       ]);
-      setPlans(plansRes.data.plans);
-      setUsage(usageRes.data.usage);
+      setPlans(plansRes.data.data || plansRes.data.plans || plansRes.data);
+      setUsage(usageRes.data.data || usageRes.data.usage || usageRes.data);
     } catch (error) {
       addToast('Failed to load billing data', 'error');
     } finally {
@@ -49,11 +49,62 @@ export default function BillingPage() {
   const handleUpgrade = async (planId: string) => {
     try {
       setUpgrading(true);
-      await client.post('/billing/upgrade', { planId });
-      addToast('Plan upgraded successfully', 'success');
-      fetchData();
+
+      // Step 1: Create checkout order
+      const checkoutRes = await client.post('/billing/checkout', { planId });
+      const { orderId, amount, currency } = checkoutRes.data.data;
+
+      // Step 2: Initialize Razorpay payment
+      const options = {
+        key: 'rzp_test_1DP5MMOk9HrQ63', // Test key for MVP
+        amount,
+        currency,
+        name: 'WATI Broadcaster',
+        description: `Plan upgrade for ${plans.find(p => p.id === planId)?.name}`,
+        order_id: orderId,
+        handler: async (response: any) => {
+          try {
+            // Step 3: Verify payment
+            await client.post('/billing/verify', {
+              orderId,
+              paymentId: response.razorpay_payment_id,
+              signature: response.razorpay_signature,
+              planId,
+            });
+            addToast('Plan upgraded successfully!', 'success');
+            fetchData();
+          } catch (error) {
+            addToast('Payment verification failed', 'error');
+          }
+        },
+        prefill: {
+          name: 'User Name',
+          email: 'user@example.com',
+        },
+        theme: {
+          color: '#2563eb',
+        },
+      };
+
+      // Load Razorpay script if not already loaded
+      if (!(window as any).Razorpay) {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        script.onload = () => {
+          const razorpay = new (window as any).Razorpay(options);
+          razorpay.open();
+        };
+        script.onerror = () => {
+          addToast('Failed to load payment gateway', 'error');
+        };
+        document.body.appendChild(script);
+      } else {
+        const razorpay = new (window as any).Razorpay(options);
+        razorpay.open();
+      }
     } catch (error) {
-      addToast('Failed to upgrade plan', 'error');
+      addToast('Failed to initiate payment', 'error');
     } finally {
       setUpgrading(false);
     }

@@ -1,7 +1,8 @@
 ﻿import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 export class AnalyticsService {
   // Get message-level analytics
@@ -28,14 +29,36 @@ export class AnalyticsService {
     try {
       const campaigns = await prisma.campaign.findMany({ where: { userId } });
       
-      const stats = await Promise.all(campaigns.map(async (c) => {
-        const messages = await prisma.message.groupBy({
-          by: ['status'],
-          where: { campaignId: c.id },
-          _count: { id: true },
-        });
-        return { campaignId: c.id, campaignName: c.name, messageStats: messages };
-      }));
+      // Get all message stats in single query instead of N+1
+      const allMessages = await prisma.message.groupBy({
+        by: ['campaignId', 'status'],
+        where: {
+          campaign: { userId },
+        },
+        _count: { id: true },
+      });
+
+      // Build stats map from results
+      const campaignStatsMap = new Map<string, any>();
+      allMessages.forEach((msg: any) => {
+        if (!campaignStatsMap.has(msg.campaignId)) {
+          campaignStatsMap.set(msg.campaignId, {});
+        }
+        const stats = campaignStatsMap.get(msg.campaignId);
+        stats[msg.status] = msg._count.id;
+      });
+
+      const stats = campaigns.map((c) => {
+        const messageStats = campaignStatsMap.get(c.id) || {};
+        return { 
+          campaignId: c.id, 
+          campaignName: c.name, 
+          messageStats: Object.entries(messageStats).map(([status, count]) => ({
+            status,
+            _count: { id: count }
+          }))
+        };
+      });
 
       const totalCampaigns = campaigns.length;
       const totalMessages = campaigns.reduce((sum, c) => sum + c.totalContacts, 0);
@@ -83,7 +106,7 @@ export class AnalyticsService {
     try {
       const events = await prisma.banRiskEvent.findMany({
         where: {
-          user: { id: userId },
+          userId,
         },
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -96,12 +119,12 @@ export class AnalyticsService {
   }
 
   // Log ban risk event
-  async logBanRiskEvent(userId: string, reason: string, severity: string) {
+  async logBanRiskEvent(userId: string, eventType: string, description: string, riskLevel: string = 'low') {
     try {
       const event = await prisma.banRiskEvent.create({
-        data: { userId, reason, severity },
+        data: { userId, eventType, description, riskLevel },
       });
-      logger.warn('Ban risk event logged', { userId, reason, severity });
+      logger.warn('Ban risk event logged', { userId, eventType, riskLevel });
       return event;
     } catch (error) {
       logger.error('Log ban risk event failed', { error, userId });

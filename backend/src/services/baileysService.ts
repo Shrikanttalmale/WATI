@@ -1,6 +1,10 @@
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth, Events } = pkg;
 import logger from '../utils/logger';
+import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../utils/prismaClient';
+
+const prisma = getPrismaClient();
 
 interface ClientState {
   client: any;
@@ -13,6 +17,26 @@ export class BaileysService {
   private clients: Map<string, ClientState> = new Map();
   private clientReadyPromises: Map<string, Promise<any>> = new Map();
 
+  async restoreSessions() {
+    try {
+      const sessions = await prisma.session.findMany({
+        where: { isActive: true },
+      });
+
+      logger.info('Restoring sessions from database', { count: sessions.length });
+
+      for (const session of sessions) {
+        try {
+          await this.initializeSession(session.userId);
+        } catch (error) {
+          logger.warn('Failed to restore session', { userId: session.userId, error });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to restore sessions', { error });
+    }
+  }
+
   async initializeSession(userId: string) {
     try {
       // Check if client already initialized
@@ -20,6 +44,15 @@ export class BaileysService {
       if (existing && existing.status === 'ready') {
         logger.info('WhatsApp session already initialized', { userId });
         return { success: true, userId, status: 'ready' };
+      }
+
+      // ISSUE #8 FIX: Check if session already exists in database
+      const dbSession = await prisma.session.findFirst({
+        where: { userId, isActive: true },
+      });
+
+      if (dbSession?.sessionData && dbSession.sessionData !== 'active') {
+        logger.info('Restoring WhatsApp session from database', { userId });
       }
 
       // Mark as initializing
@@ -87,6 +120,42 @@ export class BaileysService {
       );
 
       await Promise.race([readyPromise, timeoutPromise]);
+
+      // ISSUE #8 FIX: Persist session to database with actual session data for restoration
+      const existingSession = await prisma.session.findFirst({
+        where: { userId },
+      });
+
+      // Extract and save Baileys session state for later restoration
+      let sessionDataToSave = 'active';
+      try {
+        if (client.authStrategy && (client.authStrategy as any).sessionData) {
+          sessionDataToSave = JSON.stringify((client.authStrategy as any).sessionData);
+        }
+      } catch (err) {
+        logger.warn('Could not serialize session data', { userId, error: err });
+      }
+
+      if (!existingSession) {
+        await prisma.session.create({
+          data: {
+            userId,
+            sessionName: `session_${userId}`,
+            sessionData: sessionDataToSave,
+            isActive: true,
+            lastUsedAt: new Date(),
+          },
+        });
+      } else {
+        await prisma.session.update({
+          where: { id: existingSession.id },
+          data: { 
+            isActive: true, 
+            lastUsedAt: new Date(),
+            sessionData: sessionDataToSave,
+          },
+        });
+      }
 
       return { success: true, userId, status: 'ready' };
     } catch (error: any) {

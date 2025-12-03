@@ -32,7 +32,7 @@ export const campaignAPI = {
     apiClient.post("/campaigns", data),
   list: () => apiClient.get("/campaigns"),
   getById: (id: string) => apiClient.get(`/campaigns/${id}`),
-  addContacts: (campaignId: string, contacts: string[]) =>
+  addContacts: (campaignId: string, contacts: Array<{phone: string; name?: string}>) =>
     apiClient.post(`/campaigns/${campaignId}/contacts`, { contacts }),
   send: (campaignId: string) =>
     apiClient.post(`/campaigns/${campaignId}/send`, {}),

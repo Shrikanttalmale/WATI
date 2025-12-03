@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import 'dotenv/config';
 import logger from './utils/logger';
+import baileysService from './services/baileysService';
+import deliveryPollingService from './services/deliveryPollingService';
 
 // Import routes
 import authRoutes from './routes/authRoutes';
@@ -31,6 +33,28 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/api/', limiter);
+
+// Response format standardization middleware
+app.use((req: any, res: any, next: any) => {
+  const originalJson = res.json;
+
+  res.json = function(data: any) {
+    // If data already has success field, don't wrap
+    if (data && typeof data === 'object' && 'success' in data) {
+      return originalJson.call(this, data);
+    }
+
+    // Standardize response format
+    const response = {
+      success: true,
+      data: data,
+    };
+
+    return originalJson.call(this, response);
+  };
+
+  next();
+});
 
 // Health check
 app.get('/health', (req, res) => {
@@ -62,9 +86,23 @@ app.use((err: any, req: any, res: any, next: any) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`Server running on port ${PORT}`);
   console.log(`Server listening on http://localhost:${PORT}`);
+
+  // Restore sessions from database
+  try {
+    await baileysService.restoreSessions();
+  } catch (error) {
+    logger.error('Failed to restore sessions on startup', { error });
+  }
+
+  // Start delivery polling service
+  try {
+    deliveryPollingService.startPolling();
+  } catch (error) {
+    logger.error('Failed to start delivery polling', { error });
+  }
 });
 
 export default app;

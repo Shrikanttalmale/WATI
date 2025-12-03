@@ -98,7 +98,7 @@ router.get('/campaign/:campaignId/stats', authMiddleware, async (req: Request, r
   try {
     if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
 
-    const stats = await messageService.getMessageStats(req.params.campaignId);
+    const stats = await messageService.getMessageStats(req.params.campaignId, req.user.userId);
     res.status(200).json({ success: true, data: stats });
   } catch (error: any) {
     logger.error('Get message stats error', { error: error.message });
@@ -168,6 +168,51 @@ router.post('/process-queue', authMiddleware, async (req: Request, res: Response
     });
   } catch (error: any) {
     logger.error('Process queue error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Webhook for WhatsApp delivery confirmations
+router.post('/webhook/delivery', async (req: Request, res: Response) => {
+  try {
+    const { messageId, status, phoneNumber, campaignId, timestamp, signature } = req.body;
+
+    if (!messageId || !status) {
+      return res.status(400).json({ success: false, error: 'messageId and status required' });
+    }
+
+    // Validate webhook signature (production: verify with WhatsApp webhook secret)
+    const webhookSecret = process.env.WEBHOOK_SECRET || 'default-webhook-secret';
+    if (!signature || signature !== webhookSecret) {
+      logger.warn('Invalid webhook signature', { messageId, signature });
+      return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
+    }
+
+    logger.info('Delivery webhook received', { messageId, status, phoneNumber });
+
+    // Update message status in database
+    if (messageId && campaignId) {
+      const validStatuses = ['delivered', 'failed', 'read', 'pending'];
+      if (validStatuses.includes(status)) {
+        const updateData: any = {
+          status,
+        };
+
+        if (status === 'delivered') {
+          updateData.deliveredAt = new Date(timestamp || Date.now());
+        } else if (status === 'failed') {
+          updateData.failedAt = new Date(timestamp || Date.now());
+        } else if (status === 'read') {
+          updateData.deliveredAt = new Date(timestamp || Date.now());
+        }
+
+        await messageService.updateMessageStatus(campaignId, phoneNumber, messageId, updateData);
+      }
+    }
+
+    res.json({ success: true, received: true });
+  } catch (error: any) {
+    logger.error('Webhook error', { error: error.message });
     res.status(500).json({ success: false, error: error.message });
   }
 });

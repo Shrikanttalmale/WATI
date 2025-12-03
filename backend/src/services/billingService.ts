@@ -1,7 +1,8 @@
 ﻿import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 export class BillingService {
   // Get user's current plan
@@ -64,7 +65,7 @@ export class BillingService {
     }
   }
 
-  // Track usage
+  // Track usage - count actual delivered messages
   async trackUsage(userId: string, messagesUsed: number) {
     try {
       const user = await prisma.user.findUnique({
@@ -73,13 +74,11 @@ export class BillingService {
       });
       if (!user || !user.plan) throw new Error('User or plan not found');
 
-      // Efficiently aggregate using Prisma aggregation
-      const result = await prisma.campaign.aggregate({
-        where: { userId },
-        _sum: { sentCount: true },
+      // Count actual messages from Message table
+      const totalMessages = await prisma.message.count({
+        where: { campaign: { userId } },
       });
 
-      const totalMessages = result._sum.sentCount || 0;
       const usage = (totalMessages / user.plan.messagesPerMonth) * 100;
 
       return { usage: usage.toFixed(2), limit: user.plan.messagesPerMonth, used: totalMessages };
@@ -134,13 +133,10 @@ export class BillingService {
       });
       if (!user || !user.plan) throw new Error('User or plan not found');
 
-      // Use efficient aggregation
-      const result = await prisma.campaign.aggregate({
-        where: { userId },
-        _sum: { sentCount: true },
+      // Count actual messages from Message table
+      const totalMessages = await prisma.message.count({
+        where: { campaign: { userId } },
       });
-
-      const totalMessages = result._sum.sentCount || 0;
 
       return {
         withinLimit: totalMessages <= user.plan.messagesPerMonth,

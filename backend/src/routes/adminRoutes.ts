@@ -8,13 +8,11 @@ const router = express.Router();
 // Middleware to check admin privileges
 const checkAdmin = async (req: Request, res: Response, next: Function) => {
   try {
-    const userId = (req as any).userId || (req as any).user?.id;
-    
-    if (!userId) {
+    if (!req.user) {
       return res.status(401).json({ success: false, error: 'User not authenticated' });
     }
 
-    const isAdmin = await adminService.isAdmin(userId);
+    const isAdmin = await adminService.isAdmin(req.user.userId);
     if (!isAdmin) {
       return res.status(403).json({ success: false, error: 'Admin access required' });
     }

@@ -1,7 +1,8 @@
 ﻿import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 export class TemplateService {
   async createTemplate(userId: string, name: string, content: string, category?: string) {
@@ -27,9 +28,8 @@ export class TemplateService {
       const templates = await prisma.template.findMany({
         where: {
           OR: [
-            { userId },  // User's custom templates
-            { userId: 'default' },  // Default templates
-            { isDefault: true },  // Default flag
+            { userId },  // User's custom templates only
+            { isDefault: true },  // System default templates
           ],
         },
         take: limit,
@@ -40,7 +40,6 @@ export class TemplateService {
         where: {
           OR: [
             { userId },
-            { userId: 'default' },
             { isDefault: true },
           ],
         },
@@ -112,7 +111,7 @@ export class TemplateService {
       const duplicated = await prisma.template.create({
         data: {
           userId,
-          name: newName || \ (Copy),
+          name: newName || `${original.name} (Copy)`,
           content: original.content,
           category: original.category,
         },

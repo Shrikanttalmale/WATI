@@ -39,13 +39,14 @@ export default function DashboardPage() {
 
   const loadDashboardData = async () => {
     try {
-      const [campaignRes] = await Promise.all([
-        campaignAPI.list(),
-      ]);
+      const campaignRes = await campaignAPI.list();
 
-      setCampaigns(campaignRes.data.data?.campaigns || campaignRes.data.campaigns || campaignRes.data);
+      // Handle standardized response format
+      const campaignData = campaignRes.data?.data?.campaigns || campaignRes.data?.campaigns || [];
+      
+      setCampaigns(campaignData);
       setStats({
-        sentToday: (campaignRes.data.data?.campaigns || campaignRes.data.campaigns || campaignRes.data).reduce(
+        sentToday: campaignData.reduce(
           (sum: number, c: Campaign) =>
             c.status === "sent" ? sum + c.contactCount : sum,
           0

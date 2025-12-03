@@ -1,7 +1,8 @@
 ﻿import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 export class AdminService {
   // Verify admin privilege

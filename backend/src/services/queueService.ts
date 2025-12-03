@@ -2,8 +2,9 @@ import Queue from 'bull';
 import messageService from './messageService';
 import logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 // Redis configuration with fallback
 const redisUrl = process.env.REDIS_URL;
@@ -146,6 +147,19 @@ export class QueueService {
       try {
         logger.info('Processing campaign job', { jobId: job.id, campaignId });
 
+        // Validate campaign exists and belongs to user
+        const campaign = await prisma.campaign.findUnique({
+          where: { id: campaignId },
+        });
+        
+        if (!campaign) {
+          throw new Error('Campaign not found');
+        }
+        
+        if (campaign.userId !== userId) {
+          throw new Error('Unauthorized: Campaign does not belong to user');
+        }
+
         // Update campaign status
         await prisma.campaign.update({
           where: { id: campaignId },
@@ -186,6 +200,65 @@ export class QueueService {
 
     this.campaignQueue.on('failed', (job, error) => {
       logger.error('Campaign job failed', { jobId: job.id, error: error.message });
+    });
+
+    // Dead-letter queue processor - retry failed messages
+    this.deadLetterQueue.process(5, async (job) => {
+      const { userId, phoneNumber, message, campaignId, originalJobId, failureReason } = job.data;
+
+      try {
+        logger.info('Processing DLQ message', { jobId: job.id, originalJobId, phoneNumber });
+
+        // Attempt to resend
+        const result = await messageService.sendMessage(userId, phoneNumber, message, campaignId);
+
+        if (result.success) {
+          logger.info('DLQ message successfully resent', { originalJobId, jobId: job.id });
+          return { success: true, resent: true };
+        } else {
+          throw new Error(result.error);
+        }
+      } catch (error: any) {
+        logger.warn('DLQ message retry failed', {
+          jobId: job.id,
+          originalJobId,
+          attempt: job.attemptsMade + 1,
+          error: error.message,
+        });
+
+        // If max retries exceeded, mark as permanently failed
+        if (job.attemptsMade >= 2) {
+          // Log to database for admin review
+          if (campaignId) {
+            await prisma.message.updateMany({
+              where: {
+                campaignId,
+                recipientPhone: phoneNumber,
+                status: 'failed',
+              },
+              data: {
+                failedReason: `DLQ retry exhausted: ${error.message}`,
+              },
+            }).catch((err) => logger.error('Failed to update message in DLQ', { error: err }));
+          }
+
+          logger.error('DLQ message permanently failed', {
+            originalJobId,
+            jobId: job.id,
+            reason: error.message,
+          });
+        }
+
+        throw error;
+      }
+    });
+
+    this.deadLetterQueue.on('completed', (job) => {
+      logger.info('DLQ job completed successfully', { jobId: job.id });
+    });
+
+    this.deadLetterQueue.on('failed', (job, error) => {
+      logger.error('DLQ job permanently failed', { jobId: job.id, error: error.message });
     });
   }
 

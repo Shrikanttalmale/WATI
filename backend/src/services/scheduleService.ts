@@ -2,8 +2,9 @@ import cron from 'node-cron';
 import { PrismaClient } from '@prisma/client';
 import queueService from './queueService';
 import logger from '../utils/logger';
+import { getPrismaClient } from '../utils/prismaClient';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
 
 export class ScheduleService {
   private jobs: Map<string, cron.ScheduledTask> = new Map();
@@ -13,6 +14,12 @@ export class ScheduleService {
       const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
       if (!campaign) {
         throw new Error('Campaign not found');
+      }
+
+      // Validate scheduled time is in future
+      const now = new Date();
+      if (scheduledTime <= now) {
+        throw new Error('Scheduled time must be in the future');
       }
 
       // Persist to database first

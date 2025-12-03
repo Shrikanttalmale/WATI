@@ -16,7 +16,7 @@ export default function CampaignBuilderPage() {
     scheduledTime: "",
   });
 
-  const [contacts, setContacts] = useState<string[]>([]);
+  const [contacts, setContacts] = useState<Array<{phone: string; name?: string}>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,11 +31,17 @@ export default function CampaignBuilderPage() {
 
     const text = await file.text();
     const lines = text.trim().split("\n");
-    const phoneNumbers = lines
-      .map((line) => line.trim())
-      .filter((line) => line && /^\+?[1-9]\d{1,14}$/.test(line));
+    const parsedContacts = lines
+      .map((line) => {
+        const [phone, ...nameParts] = line.trim().split(",");
+        return {
+          phone: phone.trim(),
+          name: nameParts.length > 0 ? nameParts.join(",").trim() : undefined,
+        };
+      })
+      .filter((contact) => contact.phone && /^\+?[1-9]\d{1,14}$/.test(contact.phone));
 
-    setContacts(phoneNumbers);
+    setContacts(parsedContacts);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

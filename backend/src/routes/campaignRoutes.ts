@@ -9,7 +9,19 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
     const { name, messageBody, delayType } = req.body;
-    const campaign = await campaignService.createCampaign(req.user.userId, name, messageBody, delayType);
+    
+    // Validate required fields
+    if (!name || !messageBody) {
+      return res.status(400).json({ success: false, error: 'Name and messageBody are required' });
+    }
+    
+    // Validate delayType
+    const validDelayTypes = ['fast', 'balanced', 'safe'];
+    if (delayType && !validDelayTypes.includes(delayType)) {
+      return res.status(400).json({ success: false, error: 'Invalid delayType. Must be: fast, balanced, or safe' });
+    }
+    
+    const campaign = await campaignService.createCampaign(req.user.userId, name, messageBody, delayType || 'balanced');
     res.status(201).json({ success: true, data: campaign });
   } catch (error: any) {
     logger.error('Create campaign error', { error: error.message });

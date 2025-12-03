@@ -48,4 +48,18 @@ router.get('/status', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
+router.post('/disconnect', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const result = await whatsappService.disconnectSession(req.user.userId);
+    res.status(200).json({ success: true, data: result });
+  } catch (error: any) {
+    logger.error('Disconnect error', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

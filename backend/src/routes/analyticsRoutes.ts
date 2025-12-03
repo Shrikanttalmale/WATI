@@ -8,8 +8,8 @@ const router = express.Router();
 // GET /api/analytics/delivery-dashboard - Get delivery analytics
 router.get('/delivery-dashboard', verifyAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const dashboard = await analyticsService.getDeliveryDashboard(userId);
+    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const dashboard = await analyticsService.getDeliveryDashboard(req.user.userId);
     res.json({ success: true, data: dashboard });
   } catch (error) {
     logger.error('Get delivery dashboard failed', { error });
@@ -20,8 +20,8 @@ router.get('/delivery-dashboard', verifyAuth, async (req: Request, res: Response
 // GET /api/analytics/message/:campaignId - Get message analytics
 router.get('/message/:campaignId', verifyAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const analytics = await analyticsService.getMessageAnalytics(req.params.campaignId, userId);
+    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const analytics = await analyticsService.getMessageAnalytics(req.params.campaignId, req.user.userId);
     res.json({ success: true, data: analytics });
   } catch (error) {
     logger.error('Get message analytics failed', { error });
@@ -32,7 +32,7 @@ router.get('/message/:campaignId', verifyAuth, async (req: Request, res: Respons
 // POST /api/analytics/date-range - Get analytics by date range
 router.post('/date-range', verifyAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
+    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
     const { startDate, endDate } = req.body;
 
     if (!startDate || !endDate) {
@@ -40,7 +40,7 @@ router.post('/date-range', verifyAuth, async (req: Request, res: Response) => {
     }
 
     const analytics = await analyticsService.getAnalyticsByDateRange(
-      userId,
+      req.user.userId,
       new Date(startDate),
       new Date(endDate)
     );
@@ -54,8 +54,8 @@ router.post('/date-range', verifyAuth, async (req: Request, res: Response) => {
 // GET /api/analytics/ban-risk - Get ban risk events
 router.get('/ban-risk', verifyAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const events = await analyticsService.getBanRiskEvents(userId);
+    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const events = await analyticsService.getBanRiskEvents(req.user.userId);
     res.json({ success: true, data: events });
   } catch (error) {
     logger.error('Get ban risk events failed', { error });
@@ -66,8 +66,8 @@ router.get('/ban-risk', verifyAuth, async (req: Request, res: Response) => {
 // GET /api/analytics/safety-score - Get account safety score
 router.get('/safety-score', verifyAuth, async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    const score = await analyticsService.getAccountSafetyScore(userId);
+    if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const score = await analyticsService.getAccountSafetyScore(req.user.userId);
     res.json({ success: true, data: score });
   } catch (error) {
     logger.error('Get safety score failed', { error });

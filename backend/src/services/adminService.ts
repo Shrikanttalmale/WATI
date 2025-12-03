@@ -53,7 +53,7 @@ export class AdminService {
   }
 
   // Suspend user account
-  async suspendUser(userId: string, reason?: string) {
+  async suspendUser(userId: string, reason?: string, adminId: string = 'system') {
     try {
       const user = await prisma.user.update({
         where: { id: userId },
@@ -61,7 +61,7 @@ export class AdminService {
       });
 
       await prisma.adminAction.create({
-        data: { userId, action: 'suspend', reason, performedBy: 'admin' },
+        data: { userId, adminId, action: 'suspend', reason },
       });
 
       logger.warn('User suspended', { userId, reason });
@@ -73,7 +73,7 @@ export class AdminService {
   }
 
   // Reactivate user
-  async reactivateUser(userId: string) {
+  async reactivateUser(userId: string, adminId: string = 'system') {
     try {
       const user = await prisma.user.update({
         where: { id: userId },
@@ -81,7 +81,7 @@ export class AdminService {
       });
 
       await prisma.adminAction.create({
-        data: { userId, action: 'reactivate', performedBy: 'admin' },
+        data: { userId, adminId, action: 'reactivate' },
       });
 
       logger.info('User reactivated', { userId });

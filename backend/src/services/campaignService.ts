@@ -141,14 +141,26 @@ export class CampaignService {
         throw new Error('Campaign not found');
       }
 
+      // Aggregate actual stats from Message table for accuracy
+      const messages = await prisma.message.groupBy({
+        by: ['status'],
+        where: { campaignId },
+        _count: { id: true },
+      });
+
+      const stats: any = { pending: 0, sent: 0, delivered: 0, failed: 0, bounced: 0 };
+      messages.forEach((msg: any) => {
+        stats[msg.status] = msg._count.id;
+      });
+
       const total = campaign.totalContacts || 1;
       return {
         totalContacts: campaign.totalContacts,
-        sentCount: campaign.sentCount,
-        deliveredCount: campaign.deliveredCount,
-        failedCount: campaign.failedCount,
-        pendingCount: total - campaign.sentCount,
-        deliveryRate: total > 0 ? ((campaign.deliveredCount / total) * 100).toFixed(2) : 0,
+        sentCount: stats.sent,
+        deliveredCount: stats.delivered,
+        failedCount: stats.failed + stats.bounced,
+        pendingCount: stats.pending,
+        deliveryRate: (stats.sent + stats.delivered) > 0 ? ((stats.delivered / (stats.sent + stats.delivered)) * 100).toFixed(2) : 0,
       };
     } catch (error) {
       logger.error('Get campaign stats failed', { error, campaignId });

@@ -1,7 +1,7 @@
 ﻿import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { campaignAPI } from "../api/client";
+import { campaignAPI, messageAPI } from "../api/client";
 
 export default function CampaignBuilderPage() {
   const { t } = useTranslation();

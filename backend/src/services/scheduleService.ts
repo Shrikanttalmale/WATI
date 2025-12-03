@@ -15,6 +15,12 @@ export class ScheduleService {
         throw new Error('Campaign not found');
       }
 
+      // Persist to database first
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { scheduledFor: scheduledTime, status: 'scheduled' },
+      });
+
       const cronExpression = this.dateToCron(scheduledTime);
       const task = cron.schedule(cronExpression, async () => {
         logger.info('Running scheduled campaign', { campaignId });
@@ -41,8 +47,15 @@ export class ScheduleService {
       if (task) {
         task.stop();
         this.jobs.delete(campaignId);
-        logger.info('Campaign schedule cancelled', { campaignId });
       }
+
+      // Update database status back to draft
+      await prisma.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'draft', scheduledFor: null },
+      });
+
+      logger.info('Campaign schedule cancelled', { campaignId });
       return { success: true };
     } catch (error) {
       logger.error('Cancel schedule failed', { error, campaignId });

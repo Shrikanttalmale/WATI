@@ -73,8 +73,13 @@ export class BillingService {
       });
       if (!user || !user.plan) throw new Error('User or plan not found');
 
-      const campaigns = await prisma.campaign.findMany({ where: { userId } });
-      const totalMessages = campaigns.reduce((sum, c) => sum + c.totalContacts, 0);
+      // Efficiently aggregate using Prisma aggregation
+      const result = await prisma.campaign.aggregate({
+        where: { userId },
+        _sum: { sentCount: true },
+      });
+
+      const totalMessages = result._sum.sentCount || 0;
       const usage = (totalMessages / user.plan.messagesPerMonth) * 100;
 
       return { usage: usage.toFixed(2), limit: user.plan.messagesPerMonth, used: totalMessages };
@@ -129,8 +134,13 @@ export class BillingService {
       });
       if (!user || !user.plan) throw new Error('User or plan not found');
 
-      const campaigns = await prisma.campaign.findMany({ where: { userId } });
-      const totalMessages = campaigns.reduce((sum, c) => sum + c.totalContacts, 0);
+      // Use efficient aggregation
+      const result = await prisma.campaign.aggregate({
+        where: { userId },
+        _sum: { sentCount: true },
+      });
+
+      const totalMessages = result._sum.sentCount || 0;
 
       return {
         withinLimit: totalMessages <= user.plan.messagesPerMonth,

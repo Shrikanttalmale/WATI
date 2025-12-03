@@ -105,13 +105,26 @@ export class MessageService {
         await this.delay(delayMs);
       }
 
+      // Update campaign with accurate counts from message table
+      const messages = await prisma.message.groupBy({
+        by: ['status'],
+        where: { campaignId },
+        _count: { id: true },
+      });
+
+      const msgStats: any = {};
+      messages.forEach((msg: any) => {
+        msgStats[msg.status] = msg._count.id;
+      });
+
       await prisma.campaign.update({
         where: { id: campaignId },
         data: {
           status: 'sent',
           completedAt: new Date(),
-          sentCount,
-          failedCount,
+          sentCount: msgStats.sent || 0,
+          deliveredCount: msgStats.delivered || 0,
+          failedCount: (msgStats.failed || 0) + (msgStats.bounced || 0),
         },
       });
 
